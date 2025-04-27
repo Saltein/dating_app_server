@@ -3,6 +3,100 @@ const router = express.Router();
 const pool = require('../config/db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const transporter = require('../config/mailer');
+
+// Функция генерации 6-значного кода
+function generateCode() {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// POST /auth/send-code
+router.post('/send-code', async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+        return res.status(400).json({ error: 'Email обязателен' });
+    }
+
+    try {
+        const { rowCount } = await pool.query('SELECT id FROM user_account WHERE email = $1', [email]);
+        if (!rowCount) {
+            return res.status(404).json({ error: 'Пользователь с таким email не найден' });
+        }
+
+        const code = generateCode();
+        const now = new Date();
+
+        await pool.query(
+            `UPDATE user_account
+         SET confirmation_code = $1, confirmation_time = $2, updated_at = NOW()
+         WHERE email = $3`,
+            [code, now, email]
+        );
+
+        await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'Ваш код подтверждения',
+            text: `Ваш код подтверждения: ${code}`,
+        });
+
+        res.json({ message: 'Код отправлен на почту' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Ошибка отправки кода' });
+    }
+});
+
+// POST /auth/verify-code
+router.post('/verify-code', async (req, res) => {
+    const { email, code } = req.body;
+    if (!email || !code) {
+        return res.status(400).json({ error: 'Email и код обязательны' });
+    }
+
+    try {
+        const { rows, rowCount } = await pool.query(
+            `SELECT confirmation_code, confirmation_time
+         FROM user_account
+         WHERE email = $1`,
+            [email]
+        );
+
+        if (!rowCount) {
+            return res.status(404).json({ error: 'Пользователь не найден' });
+        }
+
+        const { confirmation_code, confirmation_time } = rows[0];
+
+        if (!confirmation_code || !confirmation_time) {
+            return res.status(400).json({ error: 'Код не был отправлен' });
+        }
+
+        const now = new Date();
+        const sentAt = new Date(confirmation_time);
+        const diffMinutes = (now - sentAt) / 1000 / 60;
+
+        if (diffMinutes > 10) {
+            return res.status(400).json({ error: 'Код истёк' });
+        }
+
+        if (confirmation_code !== code) {
+            return res.status(400).json({ error: 'Неверный код' });
+        }
+
+        await pool.query(
+            `UPDATE user_profile
+         SET verified = true
+         WHERE user_id = (SELECT id FROM user_account WHERE email = $1)`,
+            [email]
+        );
+
+        res.json({ message: 'Email подтверждён' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Ошибка проверки кода' });
+    }
+});
 
 // POST /auth/register
 router.post('/register', async (req, res) => {
