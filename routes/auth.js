@@ -18,19 +18,12 @@ router.post('/send-code', async (req, res) => {
     }
 
     try {
-        const { rowCount } = await pool.query('SELECT id FROM user_account WHERE email = $1', [email]);
-        if (!rowCount) {
-            return res.status(404).json({ error: 'Пользователь с таким email не найден' });
-        }
-
         const code = generateCode();
-        const now = new Date();
 
         await pool.query(
-            `UPDATE user_account
-         SET confirmation_code = $1, confirmation_time = $2, updated_at = NOW()
-         WHERE email = $3`,
-            [code, now, email]
+            `INSERT INTO confirmation_code (email, code, sent_at)
+             VALUES ($1, $2, NOW())`,
+            [email, code]
         );
 
         await transporter.sendMail({
@@ -41,6 +34,7 @@ router.post('/send-code', async (req, res) => {
         });
 
         res.json({ message: 'Код отправлен на почту' });
+        console.log('code ', code);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Ошибка отправки кода' });
@@ -56,40 +50,47 @@ router.post('/verify-code', async (req, res) => {
 
     try {
         const { rows, rowCount } = await pool.query(
-            `SELECT confirmation_code, confirmation_time
-         FROM user_account
-         WHERE email = $1`,
+            `SELECT code, sent_at
+             FROM confirmation_code
+             WHERE email = $1
+             ORDER BY sent_at DESC
+             LIMIT 1`,
             [email]
         );
 
         if (!rowCount) {
-            return res.status(404).json({ error: 'Пользователь не найден' });
+            return res.status(404).json({ error: 'Код не найден' });
         }
 
-        const { confirmation_code, confirmation_time } = rows[0];
-
-        if (!confirmation_code || !confirmation_time) {
-            return res.status(400).json({ error: 'Код не был отправлен' });
-        }
+        const { code: storedCode, sent_at } = rows[0];
 
         const now = new Date();
-        const sentAt = new Date(confirmation_time);
+        const sentAt = new Date(sent_at);
         const diffMinutes = (now - sentAt) / 1000 / 60;
 
         if (diffMinutes > 10) {
             return res.status(400).json({ error: 'Код истёк' });
         }
 
-        if (confirmation_code !== code) {
+        if (storedCode !== code) {
             return res.status(400).json({ error: 'Неверный код' });
         }
 
-        await pool.query(
-            `UPDATE user_profile
-         SET verified = true
-         WHERE user_id = (SELECT id FROM user_account WHERE email = $1)`,
+        // Теперь нужно проверить, зарегистрирован ли уже этот email
+        const { rowCount: userCount } = await pool.query(
+            `SELECT id FROM user_account WHERE email = $1`,
             [email]
         );
+
+        if (userCount) {
+            // Если пользователь есть — отмечаем его как верифицированного
+            await pool.query(
+                `UPDATE user_profile
+                 SET verified = true
+                 WHERE user_id = (SELECT id FROM user_account WHERE email = $1)`,
+                [email]
+            );
+        }
 
         res.json({ message: 'Email подтверждён' });
     } catch (err) {
@@ -97,6 +98,7 @@ router.post('/verify-code', async (req, res) => {
         res.status(500).json({ error: 'Ошибка проверки кода' });
     }
 });
+
 
 // POST /auth/register
 router.post('/register', async (req, res) => {
