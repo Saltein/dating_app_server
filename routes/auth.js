@@ -167,6 +167,13 @@ router.post('/login', async (req, res) => {
             expiresIn: process.env.JWT_EXPIRES_IN,
         });
 
+        // сохраняем токен в базу
+        await pool.query(
+            `INSERT INTO refresh_tokens (user_id, token, issued_at, expires_at)
+             VALUES ($1, $2, NOW(), NOW() + INTERVAL '7 days')`,
+            [id, token]
+        );
+
         res.json({ token });
     } catch (err) {
         console.error(err);
