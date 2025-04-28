@@ -5,96 +5,76 @@ const authenticateToken = require('../middleware/authMiddleware');
 
 // Получение профиля пользователя
 router.get('/', authenticateToken, async (req, res) => {
-    const userId = req.userId; // предполагаем, что authMiddleware кладет id в req.user.id
+    const userId = req.userId; // Берём userId из токена
 
     try {
-        // 1. Основная информация
-        const userInfoQuery = `
-            SELECT ua.id, ua.first_name, ua.last_name, up.birth_date, up.description
-            FROM user_account ua
-            LEFT JOIN user_profile up ON ua.id = up.user_id
-            WHERE ua.id = $1
-        `;
-        const { rows: userRows } = await pool.query(userInfoQuery, [userId]);
-        const user = userRows[0];
+        // Запрос к базе для получения данных профиля и фотографий
+        const profileResult = await pool.query(`
+            SELECT 
+                u.first_name || ' ' || u.last_name AS name,
+                EXTRACT(YEAR FROM AGE(up.birth_date)) AS age,  -- Используем up.birth_date
+                up.description, 
+                ARRAY_AGG(DISTINCT q.name) AS quality,  -- Добавлено для агрегирования качеств
+                ARRAY_AGG(DISTINCT i.name) AS interest,  -- Добавлено для агрегирования интересов
+                ARRAY_AGG(DISTINCT m.name) AS music,    -- Добавлено для агрегирования музыки
+                ARRAY_AGG(DISTINCT umv.title) AS films,  -- Исправлено на umv.title для фильмов
+                ARRAY_AGG(DISTINCT ub.title) AS books,   -- Исправлено на ub.title для книг
+                ARRAY_AGG(DISTINCT g.name) AS games,    -- Добавлено для агрегирования игр
+                json_agg(DISTINCT uph.url) AS photo
+            FROM user_account u
+            LEFT JOIN user_profile up ON u.id = up.user_id
+            LEFT JOIN user_quality uq ON u.id = uq.user_id
+            LEFT JOIN quality q ON uq.quality_id = q.id
+            LEFT JOIN user_interest ui ON u.id = ui.user_id
+            LEFT JOIN interest i ON ui.interest_id = i.id
+            LEFT JOIN user_music um ON u.id = um.user_id
+            LEFT JOIN music_option m ON um.music_option_id = m.id
+            LEFT JOIN user_game ug ON u.id = ug.user_id
+            LEFT JOIN game_option g ON ug.game_option_id = g.id
+            LEFT JOIN user_movie umv ON u.id = umv.user_id
+            LEFT JOIN user_book ub ON u.id = ub.user_id
+            LEFT JOIN user_photo uph ON u.id = uph.user_id AND uph.active = true
+            WHERE u.id = $1
+            GROUP BY u.id, up.user_id`, [userId]);
 
-        if (!user) {
-            return res.status(404).json({ message: 'Пользователь не найден' });
+        if (profileResult.rows.length === 0) {
+            return res.status(404).json({ message: 'Profile not found' });
         }
 
-        // 2. Качества
-        const { rows: qualities } = await pool.query(`
-            SELECT q.name FROM user_quality uq
-            JOIN quality q ON uq.quality_id = q.id
-            WHERE uq.user_id = $1
-        `, [userId]);
-
-        // 3. Интересы
-        const { rows: interests } = await pool.query(`
-            SELECT i.name FROM user_interest ui
-            JOIN interest i ON ui.interest_id = i.id
-            WHERE ui.user_id = $1
-        `, [userId]);
-
-        // 4. Музыка
-        const { rows: music } = await pool.query(`
-            SELECT mo.name FROM user_music um
-            JOIN music_option mo ON um.music_option_id = mo.id
-            WHERE um.user_id = $1
-        `, [userId]);
-
-        // 5. Игры
-        const { rows: games } = await pool.query(`
-            SELECT go.name FROM user_game ug
-            JOIN game_option go ON ug.game_option_id = go.id
-            WHERE ug.user_id = $1
-        `, [userId]);
-
-        // 6. Фильмы
-        const { rows: movies } = await pool.query(`
-            SELECT title FROM user_movie
-            WHERE user_id = $1
-        `, [userId]);
-
-        // 7. Книги
-        const { rows: books } = await pool.query(`
-            SELECT title FROM user_book
-            WHERE user_id = $1
-        `, [userId]);
-
-        // Собираем финальный объект
-        const profile = {
-            id: user.id,
-            name: `${user.first_name} ${user.last_name || ''}`.trim(),
-            age: user.birth_date ? calculateAge(user.birth_date) : null,
-            description: user.description || '',
-            quality: qualities.map(q => q.name),
-            interest: interests.map(i => i.name),
-            music: music.map(m => m.name),
+        // Отправляем данные профиля
+        const profile = profileResult.rows[0];
+        res.json({
+            id: userId,
+            photo: profile.photo || [],
+            name: profile.name,
+            age: profile.age,
+            description: profile.description,
+            quality: profile.quality || [],
+            interest: profile.interest || [],
+            music: profile.music || [],
             films_books: {
-                films: movies.map(m => m.title),
-                books: books.map(b => b.title),
+                films: profile.films || [],
+                books: profile.books || [],
             },
-            games: games.map(g => g.name)
-        };
-
-        res.json(profile);
+            games: profile.games || [],
+        });
     } catch (error) {
-        console.error('Ошибка получения профиля:', error);
-        res.status(500).json({ message: 'Ошибка сервера' });
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
     }
 });
 
+
 // Вспомогательная функция для подсчета возраста
-function calculateAge(birthDate) {
-    const today = new Date();
-    const birth = new Date(birthDate);
-    let age = today.getFullYear() - birth.getFullYear();
-    const m = today.getMonth() - birth.getMonth();
-    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
-        age--;
-    }
-    return age;
-}
+// function calculateAge(birthDate) {
+//     const today = new Date();
+//     const birth = new Date(birthDate);
+//     let age = today.getFullYear() - birth.getFullYear();
+//     const m = today.getMonth() - birth.getMonth();
+//     if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
+//         age--;
+//     }
+//     return age;
+// }
 
 module.exports = router;
