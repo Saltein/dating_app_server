@@ -5,22 +5,23 @@ const authenticateToken = require('../middleware/authMiddleware');
 
 // Получение профиля пользователя
 router.get('/', authenticateToken, async (req, res) => {
-    const userId = req.userId; // Берём userId из токена
+    const userId = req.userId; // Получаем userId из токена
 
     try {
-        // Запрос к базе для получения данных профиля и фотографий
         const profileResult = await pool.query(`
             SELECT 
-                u.first_name || ' ' || u.last_name AS name,
-                EXTRACT(YEAR FROM AGE(up.birth_date)) AS age,  -- Используем up.birth_date
+                u.first_name AS name,
+                EXTRACT(YEAR FROM AGE(up.birth_date)) AS age,
                 up.description, 
-                ARRAY_AGG(DISTINCT q.name) AS quality,  -- Добавлено для агрегирования качеств
-                ARRAY_AGG(DISTINCT i.name) AS interest,  -- Добавлено для агрегирования интересов
-                ARRAY_AGG(DISTINCT m.name) AS music,    -- Добавлено для агрегирования музыки
-                ARRAY_AGG(DISTINCT umv.title) AS films,  -- Исправлено на umv.title для фильмов
-                ARRAY_AGG(DISTINCT ub.title) AS books,   -- Исправлено на ub.title для книг
-                ARRAY_AGG(DISTINCT g.name) AS games,    -- Добавлено для агрегирования игр
-                json_agg(DISTINCT uph.url) AS photo
+                up.likes_received,
+                up.views_received,
+                ARRAY_AGG(DISTINCT q.name) AS quality,
+                ARRAY_AGG(DISTINCT i.name) AS interest,
+                ARRAY_AGG(DISTINCT m.name) AS music,
+                ARRAY_AGG(DISTINCT umv.title) AS films,
+                ARRAY_AGG(DISTINCT ub.title) AS books,
+                ARRAY_AGG(DISTINCT g.name) AS games,
+                JSON_AGG(DISTINCT uph.url) AS photo
             FROM user_account u
             LEFT JOIN user_profile up ON u.id = up.user_id
             LEFT JOIN user_quality uq ON u.id = uq.user_id
@@ -35,29 +36,33 @@ router.get('/', authenticateToken, async (req, res) => {
             LEFT JOIN user_book ub ON u.id = ub.user_id
             LEFT JOIN user_photo uph ON u.id = uph.user_id AND uph.active = true
             WHERE u.id = $1
-            GROUP BY u.id, up.user_id`, [userId]);
+            GROUP BY u.id, up.user_id, up.likes_received, up.views_received
+        `, [userId]);
 
         if (profileResult.rows.length === 0) {
             return res.status(404).json({ message: 'Profile not found' });
         }
 
-        // Отправляем данные профиля
         const profile = profileResult.rows[0];
+
         res.json({
             id: userId,
-            photo: profile.photo || [],
+            photo: profile.photo?.filter(url => url !== null) || [],
             name: profile.name,
             age: profile.age,
             description: profile.description,
-            quality: profile.quality || [],
-            interest: profile.interest || [],
-            music: profile.music || [],
+            quality: profile.quality?.filter(item => item !== null) || [],
+            interest: profile.interest?.filter(item => item !== null) || [],
+            music: profile.music?.filter(item => item !== null) || [],
             films_books: {
-                films: profile.films || [],
-                books: profile.books || [],
+                films: profile.films?.filter(item => item !== null) || [],
+                books: profile.books?.filter(item => item !== null) || [],
             },
-            games: profile.games || [],
+            games: profile.games?.filter(item => item !== null) || [],
+            likes: profile.likes_received || 0,
+            views: profile.views_received || 0,
         });
+
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error' });
