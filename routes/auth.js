@@ -120,16 +120,17 @@ router.post('/register', async (req, res) => {
         const password_hash = await bcrypt.hash(password, 10);
 
         const result = await pool.query(
-            `INSERT INTO user_account (first_name, last_name, email, password_hash)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id`,
-            [first_name, last_name || null, email, password_hash]
+            `INSERT INTO user_account (first_name, email, password_hash)
+             VALUES ($1, $2, $3)
+             RETURNING id`,
+            [first_name, email, password_hash] // Теперь только 3 параметра
         );
+
         const userId = result.rows[0].id;
 
         await pool.query(
             `INSERT INTO user_profile (user_id, birth_date, city)
-       VALUES ($1, $2, $3)`,
+             VALUES ($1, $2, $3)`,
             [userId, dateOfBirth || null, city || null]
         );
 
