@@ -102,7 +102,7 @@ router.post('/verify-code', async (req, res) => {
 
 // POST /auth/register
 router.post('/register', async (req, res) => {
-    const { first_name, last_name, email, password, passwordCheck, city, dateOfBirth } = req.body;
+    const { first_name, email, password, passwordCheck, city, dateOfBirth } = req.body;
 
     if (!first_name || !email || !password || !passwordCheck) {
         return res.status(400).json({ error: 'Не все поля заполнены' });
