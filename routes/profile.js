@@ -8,19 +8,19 @@ router.get('/', authenticateToken, async (req, res) => {
     const userId = req.userId; // Получаем userId из токена
 
     try {
-        const profileResult = await pool.query(`
-            SELECT 
+        const profileResult = await pool.query(
+            `SELECT 
                 u.first_name AS name,
                 EXTRACT(YEAR FROM AGE(up.birth_date)) AS age,
                 up.description, 
                 up.likes_received,
                 up.views_received,
                 ARRAY_AGG(DISTINCT q.name) AS quality,
-                ARRAY_AGG(DISTINCT i.name) AS interest,
-                ARRAY_AGG(DISTINCT m.name) AS music,
+                JSON_AGG(DISTINCT JSONB_BUILD_OBJECT('id', i.id, 'title', i.name)) AS interest,
+                JSON_AGG(DISTINCT JSONB_BUILD_OBJECT('id', m.id, 'title', m.name)) AS music,
                 ARRAY_AGG(DISTINCT umv.title) AS films,
                 ARRAY_AGG(DISTINCT ub.title) AS books,
-                ARRAY_AGG(DISTINCT g.name) AS games,
+                JSON_AGG(DISTINCT JSONB_BUILD_OBJECT('id', g.id, 'title', g.name)) AS games,
                 JSON_AGG(DISTINCT uph.url) AS photo
             FROM user_account u
             LEFT JOIN user_profile up ON u.id = up.user_id
@@ -36,8 +36,9 @@ router.get('/', authenticateToken, async (req, res) => {
             LEFT JOIN user_book ub ON u.id = ub.user_id
             LEFT JOIN user_photo uph ON u.id = uph.user_id AND uph.active = true
             WHERE u.id = $1
-            GROUP BY u.id, up.user_id, up.likes_received, up.views_received
-        `, [userId]);
+            GROUP BY u.id, up.user_id, up.likes_received, up.views_received`,
+            [userId]
+        )
 
         if (profileResult.rows.length === 0) {
             return res.status(404).json({ message: 'Profile not found' });
@@ -53,7 +54,7 @@ router.get('/', authenticateToken, async (req, res) => {
             description: profile.description,
             quality: profile.quality?.filter(item => item !== null) || [],
             interest: profile.interest?.filter(item => item !== null) || [],
-            music: profile.music?.filter(item => item !== null) || [],
+            music: profile.music?.filter(item => item && item.id !== null && item.title !== null) || [],
             films_books: {
                 films: profile.films?.filter(item => item !== null) || [],
                 books: profile.books?.filter(item => item !== null) || [],
@@ -74,13 +75,15 @@ router.put('/', authenticateToken, async (req, res) => {
     const {
         description,
         photos,        // [url1, url2, ...]
-        qualityIds,    // [1, 2, 3]
-        interestIds,   // [1, 2]
-        musicIds,      // [1, 2]
-        gameIds,       // [1, 2]
+        quality,    // [1, 2, 3]
+        interest,   // [1, 2]
+        music,      // [1, 2]
+        games,       // [1, 2]
         films,         // ['Film 1', 'Film 2']
         books          // ['Book 1', 'Book 2']
     } = req.body;
+
+    console.log(req.body)
 
     const client = await pool.connect();
 
@@ -115,10 +118,10 @@ router.put('/', authenticateToken, async (req, res) => {
             }
         };
 
-        await updateManyToMany('user_quality', 'quality_id', qualityIds);
-        await updateManyToMany('user_interest', 'interest_id', interestIds);
-        await updateManyToMany('user_music', 'music_option_id', musicIds);
-        await updateManyToMany('user_game', 'game_option_id', gameIds);
+        await updateManyToMany('user_quality', 'quality_id', quality);
+        await updateManyToMany('user_interest', 'interest_id', interest);
+        await updateManyToMany('user_music', 'music_option_id', music);
+        await updateManyToMany('user_game', 'game_option_id', games);
 
         if (Array.isArray(films)) {
             await client.query('DELETE FROM user_movie WHERE user_id = $1', [userId]);
