@@ -5,7 +5,7 @@ const app = express();
 
 const authRoutes = require('./routes/auth');
 const profileRoutes = require('./routes/profile');
-const characteristicsRoutes = require('./routes/characteristics')
+const optionsRoutes = require('./routes/options')
 
 app.use(cors({
     origin: 'http://localhost:3000',
@@ -15,7 +15,7 @@ app.use(express.json())
 
 app.use('/auth', authRoutes)
 app.use('/profile', profileRoutes)
-app.use('/list', characteristicsRoutes)
+app.use('/list', optionsRoutes)
 
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))

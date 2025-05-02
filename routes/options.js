@@ -4,7 +4,7 @@ const pool = require('../config/db')
 const authenticateToken = require('../middleware/authMiddleware')
 
 // Получить список интересов
-router.get('/interests', authenticateToken, async (req, res) => {
+router.get('/interest', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query('SELECT id, name AS title FROM interest ORDER BY name')
     res.json(result.rows)
