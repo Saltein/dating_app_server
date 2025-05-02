@@ -1,9 +1,9 @@
-const express = require('express');
-const router = express.Router();
-const pool = require('../config/db');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const transporter = require('../config/mailer');
+const express = require('express')
+const router = express.Router()
+const pool = require('../config/db')
+const bcrypt = require('bcrypt')
+const jwt = require('jsonwebtoken')
+const transporter = require('../config/mailer')
 
 // Функция генерации 6-значного кода
 function generateCode() {

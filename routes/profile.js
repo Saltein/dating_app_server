@@ -1,7 +1,7 @@
-const express = require('express');
-const router = express.Router();
-const pool = require('../config/db');
-const authenticateToken = require('../middleware/authMiddleware');
+const express = require('express')
+const router = express.Router()
+const pool = require('../config/db')
+const authenticateToken = require('../middleware/authMiddleware')
 
 // Получение профиля пользователя
 router.get('/', authenticateToken, async (req, res) => {

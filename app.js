@@ -5,15 +5,17 @@ const app = express();
 
 const authRoutes = require('./routes/auth');
 const profileRoutes = require('./routes/profile');
+const characteristicsRoutes = require('./routes/characteristics')
 
 app.use(cors({
     origin: 'http://localhost:3000',
     credentials: true
 }));
-app.use(express.json());
+app.use(express.json())
 
-app.use('/auth', authRoutes);    // /auth/register, /auth/login
-app.use('/profile', profileRoutes); // /profile (защищённый)
+app.use('/auth', authRoutes)
+app.use('/profile', profileRoutes)
+app.use('/list', characteristicsRoutes)
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const PORT = process.env.PORT || 3000
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
