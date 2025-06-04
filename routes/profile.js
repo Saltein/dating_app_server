@@ -5,63 +5,114 @@ const authenticateToken = require('../middleware/authMiddleware')
 
 // Получение профиля пользователя
 router.get('/', authenticateToken, async (req, res) => {
-    const userId = req.userId; // Получаем userId из токена
+    const userId = req.userId; // берём userId из токена
 
     try {
         const profileResult = await pool.query(
-            `SELECT 
+            `
+            SELECT
+                u.id AS user_id,
                 u.first_name AS name,
                 EXTRACT(YEAR FROM AGE(up.birth_date)) AS age,
-                up.description, 
+                up.description,
                 up.likes_received,
                 up.views_received,
-                ARRAY_AGG(DISTINCT q.name) AS quality,
-                JSON_AGG(DISTINCT JSONB_BUILD_OBJECT('id', i.id, 'title', i.name)) AS interest,
+
+                -- одно-ко-многим справочники (по одному значению)
+                ms.name AS marital_status,
+                sa.name AS smoking_attitude,
+                aa.name AS alcohol_attitude,
+                pa.name AS physical_activity,
+                ca.name AS children_attitude,
+                uh.height_cm AS height_cm,
+
+                -- интересы, музыка, игры (многие-ко-многим)
+                JSON_AGG(DISTINCT JSONB_BUILD_OBJECT('id', i.id, 'title', i.name)) AS interests,
                 JSON_AGG(DISTINCT JSONB_BUILD_OBJECT('id', m.id, 'title', m.name)) AS music,
-                ARRAY_AGG(DISTINCT umv.title) AS films,
-                ARRAY_AGG(DISTINCT ub.title) AS books,
                 JSON_AGG(DISTINCT JSONB_BUILD_OBJECT('id', g.id, 'title', g.name)) AS games,
-                JSON_AGG(DISTINCT uph.url) AS photo
+
+                -- фильмы и книги (простой список строк)
+                ARRAY_AGG(DISTINCT umv.title) FILTER (WHERE umv.title IS NOT NULL) AS films,
+                ARRAY_AGG(DISTINCT ub.title)  FILTER (WHERE ub.title IS NOT NULL) AS books,
+
+                -- фотографии (активные)
+                ARRAY_AGG(DISTINCT uph.url) FILTER (WHERE uph.active = true) AS photos
+
             FROM user_account u
             LEFT JOIN user_profile up ON u.id = up.user_id
-            LEFT JOIN user_quality uq ON u.id = uq.user_id
-            LEFT JOIN quality q ON uq.quality_id = q.id
+
+            -- связываем по-одному со справочниками
+            LEFT JOIN user_marital_status ums ON u.id = ums.user_id
+            LEFT JOIN marital_status ms ON ums.marital_status_id = ms.id
+
+            LEFT JOIN user_smoking_attitude usa ON u.id = usa.user_id
+            LEFT JOIN smoking_attitude sa ON usa.smoking_attitude_id = sa.id
+
+            LEFT JOIN user_alcohol_attitude uaa ON u.id = uaa.user_id
+            LEFT JOIN alcohol_attitude aa ON uaa.alcohol_attitude_id = aa.id
+
+            LEFT JOIN user_physical_activity upa ON u.id = upa.user_id
+            LEFT JOIN physical_activity pa ON upa.physical_activity_id = pa.id
+
+            LEFT JOIN user_children_attitude uca ON u.id = uca.user_id
+            LEFT JOIN children_attitude ca ON uca.children_attitude_id = ca.id
+
+            LEFT JOIN user_height uh ON u.id = uh.user_id
+
+            -- многие-ко-многим
             LEFT JOIN user_interest ui ON u.id = ui.user_id
             LEFT JOIN interest i ON ui.interest_id = i.id
+
             LEFT JOIN user_music um ON u.id = um.user_id
             LEFT JOIN music_option m ON um.music_option_id = m.id
+
             LEFT JOIN user_game ug ON u.id = ug.user_id
             LEFT JOIN game_option g ON ug.game_option_id = g.id
+
+            -- фильмы и книги
             LEFT JOIN user_movie umv ON u.id = umv.user_id
             LEFT JOIN user_book ub ON u.id = ub.user_id
-            LEFT JOIN user_photo uph ON u.id = uph.user_id AND uph.active = true
+
+            -- фото
+            LEFT JOIN user_photo uph ON u.id = uph.user_id
+
             WHERE u.id = $1
-            GROUP BY u.id, up.user_id, up.likes_received, up.views_received`,
+            GROUP BY
+                u.id, u.first_name,
+                up.birth_date, up.description, up.likes_received, up.views_received,
+                ms.name, sa.name, aa.name, pa.name, ca.name, uh.height_cm
+            `,
             [userId]
-        )
+        );
 
         if (profileResult.rows.length === 0) {
             return res.status(404).json({ message: 'Profile not found' });
         }
-
-        const profile = profileResult.rows[0];
+        const row = profileResult.rows[0];
 
         res.json({
-            id: userId,
-            photo: profile.photo?.filter(url => url !== null) || [],
-            name: profile.name,
-            age: profile.age,
-            description: profile.description,
-            quality: profile.quality?.filter(item => item !== null) || [],
-            interest: profile.interest?.filter(item => item !== null) || [],
-            music: profile.music?.filter(item => item && item.id !== null && item.title !== null) || [],
-            films_books: {
-                films: profile.films?.filter(item => item !== null) || [],
-                books: profile.books?.filter(item => item !== null) || [],
-            },
-            games: profile.games?.filter(item => item !== null) || [],
-            likes: profile.likes_received || 0,
-            views: profile.views_received || 0,
+            id: row.user_id,
+            name: row.name,
+            age: row.age !== null ? Number(row.age) : null,
+            description: row.description || null,
+            likes: row.likes_received || 0,
+            views: row.views_received || 0,
+
+            // единичные “качества”
+            marital_status: row.marital_status || null,
+            smoking_attitude: row.smoking_attitude || null,
+            alcohol_attitude: row.alcohol_attitude || null,
+            physical_activity: row.physical_activity || null,
+            children_attitude: row.children_attitude || null,
+            height_cm: row.height_cm !== null ? row.height_cm : null,
+
+            // списковые поля
+            photos: row.photos?.filter(url => url !== null) || [],
+            interests: row.interests?.filter(i => i.id !== null) || [],
+            music: row.music?.filter(m => m.id !== null) || [],
+            games: row.games?.filter(g => g.id !== null) || [],
+            films: row.films || [],
+            books: row.books || []
         });
 
     } catch (error) {
@@ -70,85 +121,136 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 });
 
+
+// Обновление профиля пользователя
 router.put('/', authenticateToken, async (req, res) => {
     const userId = req.userId;
     const {
         description,
-        photos,        // [url1, url2, ...]
-        quality,    // [1, 2, 3]
-        interest,   // [1, 2]
-        music,      // [1, 2]
-        games,       // [1, 2]
-        films,         // ['Film 1', 'Film 2']
-        books          // ['Book 1', 'Book 2']
-    } = req.body;
 
-    console.log(req.body)
+        // новое “качество” — по одному id из каждого справочника
+        marital_status_id,
+        smoking_attitude_id,
+        alcohol_attitude_id,
+        physical_activity_id,
+        children_attitude_id,
+        height_cm,
+
+        photos,     // массив строк [url1, url2, ...]
+        interests,  // [id1, id2, ...]
+        music,      // [id1, id2, ...]
+        games,      // [id1, id2, ...]
+        films,      // ['Название фильма 1', 'Название фильма 2', ...]
+        books       // ['Название книги 1', 'Название книги 2', ...]
+    } = req.body;
 
     const client = await pool.connect();
 
     try {
         await client.query('BEGIN');
 
+        // --- 1) Обновление описания в user_profile ---
         if (description !== undefined) {
             await client.query(
-                'UPDATE user_profile SET description = $1 WHERE user_id = $2',
+                `UPDATE user_profile
+                 SET description = $1
+                 WHERE user_id = $2`,
                 [description, userId]
             );
         }
 
+        // --- 2) Обновление единичных справочников ---
+        // Функция “delete + insert” для tab_user_X (одно-ко-многим)
+        const upsertOneToOne = async (tableName, columnName, value) => {
+            if (value === undefined) {
+                // ничего не меняем, если не передано
+                return;
+            }
+            // сначала удаляем старую связь (если есть), затем вставляем новую
+            await client.query(`DELETE FROM ${tableName} WHERE user_id = $1`, [userId]);
+            if (value !== null) {
+                await client.query(
+                    `INSERT INTO ${tableName} (user_id, ${columnName}) VALUES ($1, $2)`,
+                    [userId, value]
+                );
+            }
+        };
+
+        await upsertOneToOne('user_marital_status', 'marital_status_id', marital_status_id);
+        await upsertOneToOne('user_smoking_attitude', 'smoking_attitude_id', smoking_attitude_id);
+        await upsertOneToOne('user_alcohol_attitude', 'alcohol_attitude_id', alcohol_attitude_id);
+        await upsertOneToOne('user_physical_activity', 'physical_activity_id', physical_activity_id);
+        await upsertOneToOne('user_children_attitude', 'children_attitude_id', children_attitude_id);
+
+        // Обновление роста (user_height)
+        if (height_cm !== undefined) {
+            // удаляем прошлую запись (если есть), потом вставляем новую, если не null
+            await client.query(`DELETE FROM user_height WHERE user_id = $1`, [userId]);
+            if (height_cm !== null) {
+                await client.query(
+                    `INSERT INTO user_height (user_id, height_cm) VALUES ($1, $2)`,
+                    [userId, height_cm]
+                );
+            }
+        }
+
+        // --- 3) Обновление фотографий ---
         if (Array.isArray(photos)) {
-            await client.query('DELETE FROM user_photo WHERE user_id = $1', [userId]);
+            // помечаем все старые как inactive, либо можно просто удалить и вставить новые
+            await client.query(`DELETE FROM user_photo WHERE user_id = $1`, [userId]);
             for (const url of photos) {
                 await client.query(
-                    'INSERT INTO user_photo (user_id, url) VALUES ($1, $2)',
+                    `INSERT INTO user_photo (user_id, url) VALUES ($1, $2)`,
                     [userId, url]
                 );
             }
         }
 
-        const updateManyToMany = async (table, column, values) => {
-            if (!Array.isArray(values)) return;
-            await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
+        // --- 4) Обновление “многие-ко-многим”: интересы, музыка, игры ---
+        const updateM2M = async (tableName, columnName, values) => {
+            if (!Array.isArray(values)) {
+                return;
+            }
+            await client.query(`DELETE FROM ${tableName} WHERE user_id = $1`, [userId]);
             for (const id of values) {
                 await client.query(
-                    `INSERT INTO ${table} (user_id, ${column}) VALUES ($1, $2)`,
+                    `INSERT INTO ${tableName} (user_id, ${columnName}) VALUES ($1, $2)`,
                     [userId, id]
                 );
             }
         };
 
-        await updateManyToMany('user_quality', 'quality_id', quality);
-        await updateManyToMany('user_interest', 'interest_id', interest);
-        await updateManyToMany('user_music', 'music_option_id', music);
-        await updateManyToMany('user_game', 'game_option_id', games);
+        await updateM2M('user_interest', 'interest_id', interests);
+        await updateM2M('user_music', 'music_option_id', music);
+        await updateM2M('user_game', 'game_option_id', games);
 
+        // --- 5) Обновление фильмов и книг (простой список строк) ---
         if (Array.isArray(films)) {
-            await client.query('DELETE FROM user_movie WHERE user_id = $1', [userId]);
+            await client.query(`DELETE FROM user_movie WHERE user_id = $1`, [userId]);
             for (const title of films) {
                 await client.query(
-                    'INSERT INTO user_movie (user_id, title) VALUES ($1, $2)',
+                    `INSERT INTO user_movie (user_id, title) VALUES ($1, $2)`,
                     [userId, title]
                 );
             }
         }
-
         if (Array.isArray(books)) {
-            await client.query('DELETE FROM user_book WHERE user_id = $1', [userId]);
+            await client.query(`DELETE FROM user_book WHERE user_id = $1`, [userId]);
             for (const title of books) {
                 await client.query(
-                    'INSERT INTO user_book (user_id, title) VALUES ($1, $2)',
+                    `INSERT INTO user_book (user_id, title) VALUES ($1, $2)`,
                     [userId, title]
                 );
             }
         }
 
         await client.query('COMMIT');
-        res.status(200).json({ message: 'Профиль обновлен успешно' });
-    } catch (error) {
+        res.status(200).json({ message: 'Профиль успешно обновлён' });
+
+    } catch (err) {
         await client.query('ROLLBACK');
-        console.error(error);
-        res.status(500).json({ error: 'Ошибка при обновлении профиля' });
+        console.error(err);
+        res.status(500).json({ message: 'Ошибка при обновлении профиля' });
     } finally {
         client.release();
     }
