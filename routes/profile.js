@@ -5,7 +5,7 @@ const authenticateToken = require('../middleware/authMiddleware')
 
 // Получение профиля пользователя
 router.get('/', authenticateToken, async (req, res) => {
-    const userId = req.userId; // берём userId из токена
+    const userId = req.userId;
 
     try {
         const profileResult = await pool.query(
@@ -18,30 +18,34 @@ router.get('/', authenticateToken, async (req, res) => {
                 up.likes_received,
                 up.views_received,
 
-                -- одно-ко-многим справочники (по одному значению)
-                ms.name AS marital_status,
-                sa.name AS smoking_attitude,
-                aa.name AS alcohol_attitude,
-                pa.name AS physical_activity,
-                ca.name AS children_attitude,
+                -- справочники (id и name)
+                ms.id AS marital_status_id,
+                ms.name AS marital_status_name,
+                sa.id AS smoking_attitude_id,
+                sa.name AS smoking_attitude_name,
+                aa.id AS alcohol_attitude_id,
+                aa.name AS alcohol_attitude_name,
+                pa.id AS physical_activity_id,
+                pa.name AS physical_activity_name,
+                ca.id AS children_attitude_id,
+                ca.name AS children_attitude_name,
                 uh.height_cm AS height_cm,
 
-                -- интересы, музыка, игры (многие-ко-многим)
+                -- интересы, музыка, игры
                 JSON_AGG(DISTINCT JSONB_BUILD_OBJECT('id', i.id, 'title', i.name)) AS interests,
                 JSON_AGG(DISTINCT JSONB_BUILD_OBJECT('id', m.id, 'title', m.name)) AS music,
                 JSON_AGG(DISTINCT JSONB_BUILD_OBJECT('id', g.id, 'title', g.name)) AS games,
 
-                -- фильмы и книги (простой список строк)
+                -- фильмы и книги
                 ARRAY_AGG(DISTINCT umv.title) FILTER (WHERE umv.title IS NOT NULL) AS films,
                 ARRAY_AGG(DISTINCT ub.title)  FILTER (WHERE ub.title IS NOT NULL) AS books,
 
-                -- фотографии (активные)
+                -- фото
                 ARRAY_AGG(DISTINCT uph.url) FILTER (WHERE uph.active = true) AS photos
 
             FROM user_account u
             LEFT JOIN user_profile up ON u.id = up.user_id
 
-            -- связываем по-одному со справочниками
             LEFT JOIN user_marital_status ums ON u.id = ums.user_id
             LEFT JOIN marital_status ms ON ums.marital_status_id = ms.id
 
@@ -59,7 +63,6 @@ router.get('/', authenticateToken, async (req, res) => {
 
             LEFT JOIN user_height uh ON u.id = uh.user_id
 
-            -- многие-ко-многим
             LEFT JOIN user_interest ui ON u.id = ui.user_id
             LEFT JOIN interest i ON ui.interest_id = i.id
 
@@ -69,18 +72,21 @@ router.get('/', authenticateToken, async (req, res) => {
             LEFT JOIN user_game ug ON u.id = ug.user_id
             LEFT JOIN game_option g ON ug.game_option_id = g.id
 
-            -- фильмы и книги
             LEFT JOIN user_movie umv ON u.id = umv.user_id
             LEFT JOIN user_book ub ON u.id = ub.user_id
 
-            -- фото
             LEFT JOIN user_photo uph ON u.id = uph.user_id
 
             WHERE u.id = $1
             GROUP BY
                 u.id, u.first_name,
                 up.birth_date, up.description, up.likes_received, up.views_received,
-                ms.name, sa.name, aa.name, pa.name, ca.name, uh.height_cm
+                ms.id, ms.name,
+                sa.id, sa.name,
+                aa.id, aa.name,
+                pa.id, pa.name,
+                ca.id, ca.name,
+                uh.height_cm
             `,
             [userId]
         );
@@ -88,6 +94,7 @@ router.get('/', authenticateToken, async (req, res) => {
         if (profileResult.rows.length === 0) {
             return res.status(404).json({ message: 'Profile not found' });
         }
+
         const row = profileResult.rows[0];
 
         res.json({
@@ -98,15 +105,18 @@ router.get('/', authenticateToken, async (req, res) => {
             likes: row.likes_received || 0,
             views: row.views_received || 0,
 
-            // единичные “качества”
-            marital_status: row.marital_status || null,
-            smoking_attitude: row.smoking_attitude || null,
-            alcohol_attitude: row.alcohol_attitude || null,
-            physical_activity: row.physical_activity || null,
-            children_attitude: row.children_attitude || null,
+            marital_status: row.marital_status_id
+                ? row.marital_status_id : null,
+            smoking_attitude: row.smoking_attitude_id
+                ? row.smoking_attitude_id : null,
+            alcohol_attitude: row.alcohol_attitude_id
+                ? row.alcohol_attitude_id : null,
+            physical_activity: row.physical_activity_id
+                ? row.physical_activity_id : null,
+            children_attitude: row.children_attitude_id
+                ? row.children_attitude_id : null,
             height_cm: row.height_cm !== null ? row.height_cm : null,
 
-            // списковые поля
             photos: row.photos?.filter(url => url !== null) || [],
             interests: row.interests?.filter(i => i.id !== null) || [],
             music: row.music?.filter(m => m.id !== null) || [],
@@ -120,6 +130,7 @@ router.get('/', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 });
+
 
 
 // Обновление профиля пользователя

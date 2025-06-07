@@ -128,6 +128,13 @@ CREATE TABLE likes (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE rejects (
+  rejector_id INT NOT NULL REFERENCES user_account(id) ON DELETE CASCADE,
+  rejected_id INT NOT NULL REFERENCES user_account(id) ON DELETE CASCADE,
+  rejected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (rejector_id, rejected_id)
+);
+
 -- 8. Просмотры анкет
 CREATE TABLE views (
   id SERIAL PRIMARY KEY,
