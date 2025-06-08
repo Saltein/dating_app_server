@@ -163,15 +163,12 @@ CREATE TABLE chat (
 
 -- 3. Сообщения внутри чата
 CREATE TABLE message (
-  id             SERIAL PRIMARY KEY,
-  chat_id        INT NOT NULL
-                   REFERENCES chat(id)
-                     ON DELETE CASCADE,
-  sender_id      INT NOT NULL
-                   REFERENCES user_account(id)
-                     ON DELETE SET NULL,
-  content        TEXT NOT NULL,
-  sent_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id SERIAL PRIMARY KEY,
+  chat_id INT NOT NULL REFERENCES chat(id) ON DELETE CASCADE,
+  match_id INT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+  sender_id INT NOT NULL REFERENCES user_account(id) ON DELETE SET NULL,
+  content TEXT NOT NULL,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- 11. Настройки пользователя (ключ-значение)
@@ -209,5 +206,7 @@ CREATE INDEX idx_views_viewed ON views(viewed_id);
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX idx_user_settings_key ON user_settings(setting_key);
 -- 4. Индексы для ускорения выборок сообщений по чату и по отправителю
-CREATE INDEX idx_message_chat    ON message(chat_id);
-CREATE INDEX idx_message_sender  ON message(sender_id);
+
+CREATE INDEX idx_message_chat ON message(chat_id);
+CREATE INDEX idx_message_match_id ON message(match_id);
+CREATE INDEX idx_message_sender ON message(sender_id);
