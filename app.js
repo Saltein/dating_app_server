@@ -8,6 +8,7 @@ const profileRoutes = require('./routes/profile')
 const optionsRoutes = require('./routes/options')
 const otherProfiles = require('./routes/otherProfiles')
 const interactions = require('./routes/interactions')
+const chats = require('./routes/chats')
 
 app.use(cors({
     origin: 'http://localhost:3000',
@@ -20,6 +21,7 @@ app.use('/profile', profileRoutes)
 app.use('/list', optionsRoutes)
 app.use('/dating', otherProfiles)
 app.use('/dating', interactions)
+app.use('/chats', chats)
 
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))

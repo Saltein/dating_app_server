@@ -144,34 +144,34 @@ CREATE TABLE views (
 );
 
 -- 9. Кэш взаимных лайков (матчи)
-CREATE TABLE matches (
-  user1 INT REFERENCES user_account(id) ON DELETE CASCADE,
-  user2 INT REFERENCES user_account(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS matches (
+  id SERIAL PRIMARY KEY,
+  user1 INT NOT NULL REFERENCES user_account(id) ON DELETE CASCADE,
+  user2 INT NOT NULL REFERENCES user_account(id) ON DELETE CASCADE,
   matched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY(user1, user2)
+  UNIQUE (user1, user2)
+);
+-- 2. Новая таблица чатов, жёстко связанная с матчем
+CREATE TABLE chat (
+  id            SERIAL PRIMARY KEY,
+  match_id      INT NOT NULL UNIQUE
+                  REFERENCES matches(id)
+                    ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at     TIMESTAMPTZ
 );
 
--- 10. Чаты и сообщения
-CREATE TABLE conversation (
-  id SERIAL PRIMARY KEY,
-  started_by INT REFERENCES user_account(id) ON DELETE SET NULL,
-  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  closed_at TIMESTAMPTZ
-);
-
-CREATE TABLE participant (
-  conversation_id INT REFERENCES conversation(id) ON DELETE CASCADE,
-  user_id INT REFERENCES user_account(id) ON DELETE CASCADE,
-  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY(conversation_id, user_id)
-);
-
+-- 3. Сообщения внутри чата
 CREATE TABLE message (
-  id SERIAL PRIMARY KEY,
-  conversation_id INT REFERENCES conversation(id) ON DELETE CASCADE,
-  sender_id INT REFERENCES user_account(id) ON DELETE SET NULL,
-  content TEXT NOT NULL,
-  sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id             SERIAL PRIMARY KEY,
+  chat_id        INT NOT NULL
+                   REFERENCES chat(id)
+                     ON DELETE CASCADE,
+  sender_id      INT NOT NULL
+                   REFERENCES user_account(id)
+                     ON DELETE SET NULL,
+  content        TEXT NOT NULL,
+  sent_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- 11. Настройки пользователя (ключ-значение)
@@ -208,3 +208,6 @@ CREATE INDEX idx_views_viewer ON views(viewer_id);
 CREATE INDEX idx_views_viewed ON views(viewed_id);
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX idx_user_settings_key ON user_settings(setting_key);
+-- 4. Индексы для ускорения выборок сообщений по чату и по отправителю
+CREATE INDEX idx_message_chat    ON message(chat_id);
+CREATE INDEX idx_message_sender  ON message(sender_id);

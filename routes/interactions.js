@@ -6,11 +6,12 @@ const authenticateToken = require('../middleware/authMiddleware')
 // Common helper: record a view
 async function recordView(viewerId, viewedId) {
     // Insert view
-    await pool.query(`
-    INSERT INTO views(viewer_id, viewed_id)
-    VALUES($1, $2)
-    ON CONFLICT DO NOTHING
-  `, [viewerId, viewedId])
+    await pool.query(
+        `INSERT INTO views(viewer_id, viewed_id)
+         VALUES($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [viewerId, viewedId]
+    )
 
     // If newly inserted, increment counter
     const { rowCount } = await pool.query(
@@ -25,19 +26,33 @@ async function recordView(viewerId, viewedId) {
     }
 }
 
-// Helper: create match if mutual interaction exists
-async function createMatchIfMutual(userA, userB, type) {
-    // type: 'like' or 'superlike'
+// Helper: create match if mutual interaction exists, and create a chat
+async function createMatchAndChatIfMutual(userA, userB, type) {
+    // Check for existing reverse like/superlike
     const { rowCount } = await pool.query(
         `SELECT 1 FROM likes WHERE from_user = $1 AND to_user = $2 AND type = $3`,
         [userB, userA, type]
     )
     if (rowCount > 0) {
+        // Determine ordering for match
         const [u1, u2] = userA < userB ? [userA, userB] : [userB, userA]
-        await pool.query(
-            `INSERT INTO matches(user1, user2) VALUES($1, $2) ON CONFLICT DO NOTHING`,
+        // Insert into matches
+        const matchResult = await pool.query(
+            `INSERT INTO matches(user1, user2)
+             VALUES($1, $2)
+             ON CONFLICT DO NOTHING
+             RETURNING id`,
             [u1, u2]
         )
+        const matchId = matchResult.rows[0]?.id
+        if (matchId) {
+            // Create associated chat
+            await pool.query(
+                `INSERT INTO chat(match_id) VALUES($1)
+                 ON CONFLICT DO NOTHING`,
+                [matchId]
+            )
+        }
         return true
     }
     return false
@@ -71,7 +86,7 @@ router.post('/interact/like', authenticateToken, async (req, res) => {
         )
         await recordView(viewerId, viewedId)
 
-        const match = await createMatchIfMutual(viewerId, viewedId, 'like')
+        const match = await createMatchAndChatIfMutual(viewerId, viewedId, 'like')
         res.json({ success: true, action: 'liked', match })
     } catch (err) {
         console.error(err)
@@ -98,7 +113,7 @@ router.post('/interact/superlike', authenticateToken, async (req, res) => {
         )
         await recordView(viewerId, viewedId)
 
-        const match = await createMatchIfMutual(viewerId, viewedId, 'superlike')
+        const match = await createMatchAndChatIfMutual(viewerId, viewedId, 'superlike')
         res.json({ success: true, action: 'superliked', match })
     } catch (err) {
         console.error(err)
