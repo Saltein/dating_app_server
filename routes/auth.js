@@ -102,8 +102,9 @@ router.post('/verify-code', async (req, res) => {
 
 // POST /auth/register
 router.post('/register', async (req, res) => {
-    const { first_name, email, password, passwordCheck, city, dateOfBirth } = req.body;
+    const { first_name, email, password, passwordCheck, city, dateOfBirth, gender } = req.body;
 
+    // Проверяем обязательные поля
     if (!first_name || !email || !password || !passwordCheck) {
         return res.status(400).json({ error: 'Не все поля заполнены' });
     }
@@ -112,26 +113,33 @@ router.post('/register', async (req, res) => {
     }
 
     try {
-        const { rowCount } = await pool.query('SELECT 1 FROM user_account WHERE email = $1', [email]);
+        // Проверяем, занят ли email
+        const { rowCount } = await pool.query(
+            'SELECT 1 FROM user_account WHERE email = $1',
+            [email]
+        );
         if (rowCount) {
             return res.status(409).json({ error: 'Email уже занят' });
         }
 
+        // Хэшируем пароль
         const password_hash = await bcrypt.hash(password, 10);
 
+        // Вставляем в user_account
         const result = await pool.query(
             `INSERT INTO user_account (first_name, email, password_hash)
              VALUES ($1, $2, $3)
              RETURNING id`,
-            [first_name, email, password_hash] // Теперь только 3 параметра
+            [first_name, email, password_hash]
         );
 
         const userId = result.rows[0].id;
 
+        // Вставляем профиль с полем gender
         await pool.query(
-            `INSERT INTO user_profile (user_id, birth_date, city)
-             VALUES ($1, $2, $3)`,
-            [userId, dateOfBirth || null, city || null]
+            `INSERT INTO user_profile (user_id, birth_date, city, gender)
+             VALUES ($1, $2, $3, $4)`,
+            [userId, dateOfBirth || null, city || null, gender]
         );
 
         res.status(201).json({ message: 'Регистрация успешна' });

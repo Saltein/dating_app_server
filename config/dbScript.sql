@@ -18,15 +18,19 @@ CREATE TABLE confirmation_code (
 
 -- 2. Таблица публичного профиля
 CREATE TABLE user_profile (
-  user_id INT PRIMARY KEY REFERENCES user_account(id) ON DELETE CASCADE,
-  birth_date DATE,
-  city VARCHAR(100),
-  description TEXT,
-  verified BOOLEAN NOT NULL DEFAULT FALSE,
-  superlikes_received INT NOT NULL DEFAULT 0,
-  views_received INT NOT NULL DEFAULT 0,
-  likes_received INT NOT NULL DEFAULT 0,
-  interest_coefficient  NUMERIC(5,2) NOT NULL DEFAULT 0
+  user_id               INT             PRIMARY KEY
+                                     REFERENCES user_account(id)
+                                       ON DELETE CASCADE,
+  birth_date            DATE,
+  city                  VARCHAR(100),
+  description           TEXT,
+  verified              BOOLEAN         NOT NULL DEFAULT FALSE,
+  superlikes_received   INT             NOT NULL DEFAULT 0,
+  views_received        INT             NOT NULL DEFAULT 0,
+  likes_received        INT             NOT NULL DEFAULT 0,
+  interest_coefficient  NUMERIC(5,2)    NOT NULL DEFAULT 0,
+  gender                   CHAR(1)         NOT NULL DEFAULT 'M'
+                                     CHECK (gender IN ('M', 'F'))
 );
 
 -- 3. Справочники для «многие-ко-многим»

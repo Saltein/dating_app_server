@@ -83,14 +83,21 @@ async function fetchProfiles(cte, params, options = {}) {
 
 // POST /other-profiles
 router.post('/other-profiles', authenticateToken, async (req, res) => {
-  const { viewerId } = req.body;
-  if (!viewerId) return res.status(400).json({ error: 'viewerId is required' });
+  const { viewerId, viewerGender } = req.body;
+  console.log('viewerId, viewerGender', viewerId, viewerGender)
+  if (!viewerId) {
+    return res.status(400).json({ error: 'viewerId is required' });
+  }
+  if (!viewerGender) {
+    return res.status(400).json({ error: 'viewerGender is required' });
+  }
 
   const cte = `
     SELECT ua.id, up.interest_coefficient
     FROM user_account ua
     JOIN user_profile up ON ua.id = up.user_id
     WHERE ua.id <> $1
+      AND up.gender <> $2                    -- только противоположный пол
       AND NOT EXISTS (
         SELECT 1 FROM views v
         WHERE v.viewer_id = $1
@@ -102,10 +109,14 @@ router.post('/other-profiles', authenticateToken, async (req, res) => {
   `;
 
   try {
-    const rows = await fetchProfiles(cte, [viewerId], {
-      orderBy: 'cte.interest_coefficient DESC',
-      extraGroupFields: ['cte.interest_coefficient']
-    });
+    const rows = await fetchProfiles(
+      cte,
+      [viewerId, viewerGender],             // передаём viewerGender как второй параметр
+      {
+        orderBy: 'cte.interest_coefficient DESC',
+        extraGroupFields: ['cte.interest_coefficient']
+      }
+    );
     res.json(rows);
   } catch (err) {
     console.error(err);

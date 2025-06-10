@@ -17,6 +17,7 @@ router.get('/', authenticateToken, async (req, res) => {
                 up.description,
                 up.likes_received,
                 up.views_received,
+                up.gender,
 
                 -- справочники (id и name)
                 ms.id AS marital_status_id,
@@ -80,7 +81,7 @@ router.get('/', authenticateToken, async (req, res) => {
             WHERE u.id = $1
             GROUP BY
                 u.id, u.first_name,
-                up.birth_date, up.description, up.likes_received, up.views_received,
+                up.birth_date, up.description, up.likes_received, up.views_received, up.gender,
                 ms.id, ms.name,
                 sa.id, sa.name,
                 aa.id, aa.name,
@@ -102,19 +103,15 @@ router.get('/', authenticateToken, async (req, res) => {
             name: row.name,
             age: row.age !== null ? Number(row.age) : null,
             description: row.description || null,
+            gender: row.gender || null,
             likes: row.likes_received || 0,
             views: row.views_received || 0,
 
-            marital_status: row.marital_status_id
-                ? row.marital_status_id : null,
-            smoking_attitude: row.smoking_attitude_id
-                ? row.smoking_attitude_id : null,
-            alcohol_attitude: row.alcohol_attitude_id
-                ? row.alcohol_attitude_id : null,
-            physical_activity: row.physical_activity_id
-                ? row.physical_activity_id : null,
-            children_attitude: row.children_attitude_id
-                ? row.children_attitude_id : null,
+            marital_status: row.marital_status_id || null,
+            smoking_attitude: row.smoking_attitude_id || null,
+            alcohol_attitude: row.alcohol_attitude_id || null,
+            physical_activity: row.physical_activity_id || null,
+            children_attitude: row.children_attitude_id || null,
             height_cm: row.height_cm !== null ? row.height_cm : null,
 
             photos: row.photos?.filter(url => url !== null) || [],
