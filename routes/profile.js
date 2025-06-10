@@ -149,7 +149,8 @@ router.put('/', authenticateToken, async (req, res) => {
         music,      // [id1, id2, ...]
         games,      // [id1, id2, ...]
         films,      // ['Название фильма 1', 'Название фильма 2', ...]
-        books       // ['Название книги 1', 'Название книги 2', ...]
+        books,      // ['Название книги 1', 'Название книги 2', ...]
+        interest_coefficient
     } = req.body;
 
     const client = await pool.connect();
@@ -164,6 +165,15 @@ router.put('/', authenticateToken, async (req, res) => {
                  SET description = $1
                  WHERE user_id = $2`,
                 [description, userId]
+            );
+        }
+
+        if (interest_coefficient !== undefined) {
+            await client.query(
+                `UPDATE user_profile
+         SET interest_coefficient = $1
+         WHERE user_id = $2`,
+                [interest_coefficient, userId]
             );
         }
 
