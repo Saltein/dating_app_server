@@ -2,6 +2,62 @@ const express = require('express')
 const router = express.Router()
 const pool = require('../config/db')
 const authenticateToken = require('../middleware/authMiddleware')
+const multer = require('multer');
+const fs = require('fs');
+require('dotenv').config();
+const AWS = require('aws-sdk');
+
+// Multer для временного сохранения:
+const upload = multer({ dest: 'uploads/' });
+
+// S3‑клиент для Filebase:
+const s3 = new AWS.S3({
+    endpoint: 'https://s3.filebase.com',
+    accessKeyId: process.env.FILEBASE_ACCESS_KEY,
+    secretAccessKey: process.env.FILEBASE_SECRET_KEY,
+    region: 'us-east-1',
+    s3ForcePathStyle: true
+});
+
+// Загрузка фото профиля
+router.post('/upload-photo', authenticateToken, upload.single('avatar'), async (req, res) => {
+    try {
+        const file = req.file;
+        if (!file) return res.status(400).json({ message: 'No file uploaded' });
+
+        const bucket = process.env.FILEBASE_BUCKET;
+        const key = `avatars/${req.userId}_${Date.now()}_${file.originalname}`;
+        const params = { Bucket: bucket, Key: key, Body: fs.createReadStream(file.path), ContentType: file.mimetype };
+
+        // Считываем CID из заголовков
+        let savedCID;
+        const request = s3.putObject(params);
+        request.on('httpHeaders', (status, headers) => {
+            savedCID = headers['x-amz-meta-cid'];
+        });
+
+        const result = await request.promise();
+        fs.unlinkSync(file.path);
+
+        if (!savedCID) {
+            console.error('CID not received');
+            return res.status(500).json({ message: 'Failed to obtain IPFS CID' });
+        }
+
+        const url = `https://ipfs.filebase.io/ipfs/${savedCID}`;
+
+        await pool.query(
+            `INSERT INTO user_photo (user_id, url, active) VALUES ($1, $2, true)`,
+            [req.userId, url]
+        );
+
+        res.json({ url });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Upload error' });
+    }
+});
 
 // Получение профиля пользователя
 router.get('/', authenticateToken, async (req, res) => {
