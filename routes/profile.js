@@ -6,6 +6,7 @@ const multer = require('multer');
 const fs = require('fs');
 require('dotenv').config();
 const AWS = require('aws-sdk');
+const sharp = require('sharp');
 
 // Multer для временного сохранения:
 const upload = multer({ dest: 'uploads/' });
@@ -21,13 +22,93 @@ const s3 = new AWS.S3({
 
 // Загрузка фото профиля
 router.post('/upload-photo', authenticateToken, upload.single('avatar'), async (req, res) => {
+    let file = req.file;
+    console.log('start size', file.size, file)
     try {
-        const file = req.file;
+        // Проверка наличия файла
         if (!file) return res.status(400).json({ message: 'No file uploaded' });
 
+        // Проверка формата файла (только изображения)
+        if (!file.mimetype.startsWith('image/')) {
+            return res.status(400).json({ message: 'Only image files are allowed' });
+        }
+
+        // Сжатие изображения
+        let compressedImage;
+        const maxSizeKB = 30;
+        let quality = 80; // Начальное качество сжатия
+
+        // Функция для сжатия изображения
+        const compressImage = async (options = {}) => {
+            let image = sharp(file.path);
+            const metadata = await image.metadata();
+
+            // Если указаны параметры изменения размера
+            if (options.resize) {
+                // Вычисляем новые размеры (уменьшаем на 50%)
+                const newWidth = Math.round(metadata.width * 0.5);
+                const newHeight = Math.round(metadata.height * 0.5);
+                image = image.resize(newWidth, newHeight);
+            }
+
+            // Конвертируем в webp для лучшего сжатия
+            return image
+                .webp({ quality, force: true })
+                .toBuffer();
+        };
+
+        // Попытка 1: Сжатие только качеством
+        compressedImage = await compressImage();
+        let resizeCount = 0;
+        const maxResizeAttempts = 4; // Максимальное количество уменьшений размера
+
+        // Попытки сжатия с уменьшением размера
+        while (compressedImage.length > maxSizeKB * 1024 && resizeCount < maxResizeAttempts) {
+            quality = 80; // Сбрасываем качество перед новой попыткой
+
+            // Попытка сжатия с уменьшением размера
+            compressedImage = await compressImage({ resize: true });
+            resizeCount++;
+            console.log(`Resize attempt ${resizeCount}, size: ${compressedImage.length} bytes`);
+
+            // Если после уменьшения размера все еще большой файл - снижаем качество
+            while (compressedImage.length > maxSizeKB * 1024 && quality >= 4) {
+                quality -= 3;
+                compressedImage = await compressImage({ resize: true });
+                console.log(`Quality reduced to ${quality}%, size: ${compressedImage.length} bytes`);
+            }
+        }
+
+        // Проверка финального размера
+        if (compressedImage.length > maxSizeKB * 1024) {
+            console.log('Image cannot be compressed below 30KB', compressedImage.length)
+            return res.status(400).json({ message: 'Image cannot be compressed below 30KB' });
+        }
+
+        try {
+            fs.unlinkSync(file.path); // Удаляем временный файл сразу после чтения
+            console.log('Temp file deleted early');
+        } catch (e) {
+            console.error('Early temp delete error:', e);
+        }
+
+        console.log('final size', compressedImage.length)
+
+        // Перезаписываем файл сжатым изображением
+        fs.writeFileSync(file.path, compressedImage);
+        file.size = compressedImage.length;
+        file.mimetype = 'image/webp';
+
+        // Подготовка параметров для S3
         const bucket = process.env.FILEBASE_BUCKET;
-        const key = `avatars/${req.userId}_${Date.now()}_${file.originalname}`;
-        const params = { Bucket: bucket, Key: key, Body: fs.createReadStream(file.path), ContentType: file.mimetype };
+        const key = `avatars/${req.userId}_${Date.now()}.webp`; // Используем webp
+        const params = {
+            Bucket: bucket,
+            Key: key,
+            Body: compressedImage, // <-- ПЕРЕДАЁМ БУФЕР НАПРЯМУЮ
+            ContentType: 'image/webp',
+            ContentLength: compressedImage.length // Явно указываем размер
+        };
 
         // Считываем CID из заголовков
         let savedCID;
@@ -36,8 +117,7 @@ router.post('/upload-photo', authenticateToken, upload.single('avatar'), async (
             savedCID = headers['x-amz-meta-cid'];
         });
 
-        const result = await request.promise();
-        fs.unlinkSync(file.path);
+        await request.promise();
 
         if (!savedCID) {
             console.error('CID not received');
@@ -56,6 +136,15 @@ router.post('/upload-photo', authenticateToken, upload.single('avatar'), async (
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'Upload error' });
+    } finally {
+        // Удаление временного файла в любом случае
+        if (file && file.path) {
+            try {
+                fs.unlinkSync(file.path);
+            } catch (e) {
+                console.error('Error deleting temp file:', e);
+            }
+        }
     }
 });
 
