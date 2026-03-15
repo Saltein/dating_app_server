@@ -1,155 +1,207 @@
-const express = require('express')
-const router = express.Router()
-const pool = require('../config/db')
-const authenticateToken = require('../middleware/authMiddleware')
-const multer = require('multer');
-const fs = require('fs');
-require('dotenv').config();
-const AWS = require('aws-sdk');
-const sharp = require('sharp');
+const express = require("express");
+const router = express.Router();
+const pool = require("../config/db");
+const authenticateToken = require("../middleware/authMiddleware");
+const multer = require("multer");
+const fs = require("fs");
+require("dotenv").config();
+const AWS = require("aws-sdk");
+const sharp = require("sharp");
 
 // Multer для временного сохранения:
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ dest: "uploads/" });
 
+const s3service = "filebase";
 // S3‑клиент для Filebase:
-const s3 = new AWS.S3({
-    endpoint: 'https://s3.filebase.com',
-    accessKeyId: process.env.FILEBASE_ACCESS_KEY,
-    secretAccessKey: process.env.FILEBASE_SECRET_KEY,
-    region: 'us-east-1',
-    s3ForcePathStyle: true
-});
+let s3;
+if (s3service === "filebase") {
+    const s3 = new AWS.S3({
+        endpoint: "https://s3.filebase.com",
+        accessKeyId: process.env.FILEBASE_ACCESS_KEY,
+        secretAccessKey: process.env.FILEBASE_SECRET_KEY,
+        region: "us-east-1",
+        s3ForcePathStyle: true,
+    });
+} else if (s3service === "yandex") {
+    const s3 = new AWS.S3({
+        endpoint: process.env.S3_ENDPOINT,
+        accessKeyId: process.env.S3_ACCESS_KEY,
+        secretAccessKey: process.env.S3_SECRET_KEY,
+        region: "us-east-1",
+        s3ForcePathStyle: true,
+    });
+}
 
 // Загрузка фото профиля
-router.post('/upload-photo', authenticateToken, upload.single('avatar'), async (req, res) => {
-    let file = req.file;
-    console.log('start size', file.size, file)
-    try {
-        // Проверка наличия файла
-        if (!file) return res.status(400).json({ message: 'No file uploaded' });
-
-        // Проверка формата файла (только изображения)
-        if (!file.mimetype.startsWith('image/')) {
-            return res.status(400).json({ message: 'Only image files are allowed' });
-        }
-
-        // Сжатие изображения
-        let compressedImage;
-        const maxSizeKB = 30;
-        let quality = 80; // Начальное качество сжатия
-
-        // Функция для сжатия изображения
-        const compressImage = async (options = {}) => {
-            let image = sharp(file.path);
-            const metadata = await image.metadata();
-
-            // Если указаны параметры изменения размера
-            if (options.resize) {
-                // Вычисляем новые размеры (уменьшаем на 50%)
-                const newWidth = Math.round(metadata.width * 0.5);
-                const newHeight = Math.round(metadata.height * 0.5);
-                image = image.resize(newWidth, newHeight);
-            }
-
-            // Конвертируем в webp для лучшего сжатия
-            return image
-                .webp({ quality, force: true })
-                .toBuffer();
-        };
-
-        // Попытка 1: Сжатие только качеством
-        compressedImage = await compressImage();
-        let resizeCount = 0;
-        const maxResizeAttempts = 4; // Максимальное количество уменьшений размера
-
-        // Попытки сжатия с уменьшением размера
-        while (compressedImage.length > maxSizeKB * 1024 && resizeCount < maxResizeAttempts) {
-            quality = 80; // Сбрасываем качество перед новой попыткой
-
-            // Попытка сжатия с уменьшением размера
-            compressedImage = await compressImage({ resize: true });
-            resizeCount++;
-            console.log(`Resize attempt ${resizeCount}, size: ${compressedImage.length} bytes`);
-
-            // Если после уменьшения размера все еще большой файл - снижаем качество
-            while (compressedImage.length > maxSizeKB * 1024 && quality >= 4) {
-                quality -= 3;
-                compressedImage = await compressImage({ resize: true });
-                console.log(`Quality reduced to ${quality}%, size: ${compressedImage.length} bytes`);
-            }
-        }
-
-        // Проверка финального размера
-        if (compressedImage.length > maxSizeKB * 1024) {
-            console.log('Image cannot be compressed below 30KB', compressedImage.length)
-            return res.status(400).json({ message: 'Image cannot be compressed below 30KB' });
-        }
-
+router.post(
+    "/upload-photo",
+    authenticateToken,
+    upload.single("avatar"),
+    async (req, res) => {
+        let file = req.file;
+        console.log("start size", file.size, file);
         try {
-            fs.unlinkSync(file.path); // Удаляем временный файл сразу после чтения
-            console.log('Temp file deleted early');
-        } catch (e) {
-            console.error('Early temp delete error:', e);
-        }
+            // Проверка наличия файла
+            if (!file)
+                return res.status(400).json({ message: "No file uploaded" });
 
-        console.log('final size', compressedImage.length)
+            // Проверка формата файла (только изображения)
+            if (!file.mimetype.startsWith("image/")) {
+                return res
+                    .status(400)
+                    .json({ message: "Only image files are allowed" });
+            }
 
-        // Перезаписываем файл сжатым изображением
-        fs.writeFileSync(file.path, compressedImage);
-        file.size = compressedImage.length;
-        file.mimetype = 'image/webp';
+            // Сжатие изображения
+            let compressedImage;
+            const maxSizeKB = 30;
+            let quality = 80; // Начальное качество сжатия
 
-        // Подготовка параметров для S3
-        const bucket = process.env.FILEBASE_BUCKET;
-        const key = `avatars/${req.userId}_${Date.now()}.webp`; // Используем webp
-        const params = {
-            Bucket: bucket,
-            Key: key,
-            Body: compressedImage, // <-- ПЕРЕДАЁМ БУФЕР НАПРЯМУЮ
-            ContentType: 'image/webp',
-            ContentLength: compressedImage.length // Явно указываем размер
-        };
+            // Функция для сжатия изображения
+            const compressImage = async (options = {}) => {
+                let image = sharp(file.path);
+                const metadata = await image.metadata();
 
-        // Считываем CID из заголовков
-        let savedCID;
-        const request = s3.putObject(params);
-        request.on('httpHeaders', (status, headers) => {
-            savedCID = headers['x-amz-meta-cid'];
-        });
+                // Если указаны параметры изменения размера
+                if (options.resize) {
+                    // Вычисляем новые размеры (уменьшаем на 50%)
+                    const newWidth = Math.round(metadata.width * 0.5);
+                    const newHeight = Math.round(metadata.height * 0.5);
+                    image = image.resize(newWidth, newHeight);
+                }
 
-        await request.promise();
+                // Конвертируем в webp для лучшего сжатия
+                return image.webp({ quality, force: true }).toBuffer();
+            };
 
-        if (!savedCID) {
-            console.error('CID not received');
-            return res.status(500).json({ message: 'Failed to obtain IPFS CID' });
-        }
+            // Попытка 1: Сжатие только качеством
+            compressedImage = await compressImage();
+            let resizeCount = 0;
+            const maxResizeAttempts = 4; // Максимальное количество уменьшений размера
 
-        const url = `https://ipfs.filebase.io/ipfs/${savedCID}`;
+            // Попытки сжатия с уменьшением размера
+            while (
+                compressedImage.length > maxSizeKB * 1024 &&
+                resizeCount < maxResizeAttempts
+            ) {
+                quality = 80; // Сбрасываем качество перед новой попыткой
 
-        await pool.query(
-            `INSERT INTO user_photo (user_id, url, active) VALUES ($1, $2, true)`,
-            [req.userId, url]
-        );
+                // Попытка сжатия с уменьшением размера
+                compressedImage = await compressImage({ resize: true });
+                resizeCount++;
+                console.log(
+                    `Resize attempt ${resizeCount}, size: ${compressedImage.length} bytes`,
+                );
 
-        res.json({ url });
+                // Если после уменьшения размера все еще большой файл - снижаем качество
+                while (
+                    compressedImage.length > maxSizeKB * 1024 &&
+                    quality >= 4
+                ) {
+                    quality -= 3;
+                    compressedImage = await compressImage({ resize: true });
+                    console.log(
+                        `Quality reduced to ${quality}%, size: ${compressedImage.length} bytes`,
+                    );
+                }
+            }
 
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Upload error' });
-    } finally {
-        // Удаление временного файла в любом случае
-        if (file && file.path) {
+            // Проверка финального размера
+            if (compressedImage.length > maxSizeKB * 1024) {
+                console.log(
+                    "Image cannot be compressed below 30KB",
+                    compressedImage.length,
+                );
+                return res
+                    .status(400)
+                    .json({ message: "Image cannot be compressed below 30KB" });
+            }
+
             try {
-                fs.unlinkSync(file.path);
+                fs.unlinkSync(file.path); // Удаляем временный файл сразу после чтения
+                console.log("Temp file deleted early");
             } catch (e) {
-                console.error('Error deleting temp file:', e);
+                console.error("Early temp delete error:", e);
+            }
+
+            console.log("final size", compressedImage.length);
+
+            // Перезаписываем файл сжатым изображением
+            fs.writeFileSync(file.path, compressedImage);
+            file.size = compressedImage.length;
+            file.mimetype = "image/webp";
+
+            // Подготовка параметров для S3
+
+            let bucket, key, params, url;
+            if (s3service === "filebase") {
+                bucket = process.env.FILEBASE_BUCKET;
+                key = `avatars/${req.userId}_${Date.now()}.webp`; // Используем webp
+                params = {
+                    Bucket: bucket,
+                    Key: key,
+                    Body: compressedImage, // <-- ПЕРЕДАЁМ БУФЕР НАПРЯМУЮ
+                    ContentType: "image/webp",
+                    ContentLength: compressedImage.length, // Явно указываем размер
+                };
+
+                // Считываем CID из заголовков
+                let savedCID;
+                const request = s3.putObject(params);
+                request.on("httpHeaders", (status, headers) => {
+                    savedCID = headers["x-amz-meta-cid"];
+                });
+
+                await request.promise();
+
+                if (!savedCID) {
+                    console.error("CID not received");
+                    return res
+                        .status(500)
+                        .json({ message: "Failed to obtain IPFS CID" });
+                }
+
+                url = `https://ipfs.filebase.io/ipfs/${savedCID}`;
+            } else if (s3service === "yandex") {
+                bucket = process.env.S3_BUCKET;
+                key = `avatars/${req.userId}_${Date.now()}.webp`; // Используем webp
+                params = {
+                    Bucket: bucket,
+                    Key: key,
+                    Body: compressedImage, // <-- ПЕРЕДАЁМ БУФЕР НАПРЯМУЮ
+                    ContentType: "image/webp",
+                    ContentLength: compressedImage.length, // Явно указываем размер
+                };
+
+                await s3.putObject(params).promise();
+
+                url = `https://${bucket}.storage.yandexcloud.net/${key}`;
+            }
+
+            await pool.query(
+                `INSERT INTO user_photo (user_id, url, active) VALUES ($1, $2, true)`,
+                [req.userId, url],
+            );
+
+            res.json({ url });
+        } catch (err) {
+            console.error(err);
+            res.status(500).json({ message: "Upload error" });
+        } finally {
+            // Удаление временного файла в любом случае
+            if (file && file.path) {
+                try {
+                    fs.unlinkSync(file.path);
+                } catch (e) {
+                    console.error("Error deleting temp file:", e);
+                }
             }
         }
-    }
-});
+    },
+);
 
 // Получение профиля пользователя
-router.get('/', authenticateToken, async (req, res) => {
+router.get("/", authenticateToken, async (req, res) => {
     const userId = req.userId;
 
     try {
@@ -234,11 +286,11 @@ router.get('/', authenticateToken, async (req, res) => {
                 ca.id, ca.name,
                 uh.height_cm
             `,
-            [userId]
+            [userId],
         );
 
         if (profileResult.rows.length === 0) {
-            return res.status(404).json({ message: 'Profile not found' });
+            return res.status(404).json({ message: "Profile not found" });
         }
 
         const row = profileResult.rows[0];
@@ -259,24 +311,21 @@ router.get('/', authenticateToken, async (req, res) => {
             children_attitude: row.children_attitude_id || null,
             height_cm: row.height_cm !== null ? row.height_cm : null,
 
-            photos: row.photos?.filter(url => url !== null) || [],
-            interests: row.interests?.filter(i => i.id !== null) || [],
-            music: row.music?.filter(m => m.id !== null) || [],
-            games: row.games?.filter(g => g.id !== null) || [],
+            photos: row.photos?.filter((url) => url !== null) || [],
+            interests: row.interests?.filter((i) => i.id !== null) || [],
+            music: row.music?.filter((m) => m.id !== null) || [],
+            games: row.games?.filter((g) => g.id !== null) || [],
             films: row.films || [],
-            books: row.books || []
+            books: row.books || [],
         });
-
     } catch (error) {
         console.error(error);
-        res.status(500).json({ message: 'Server error' });
+        res.status(500).json({ message: "Server error" });
     }
 });
 
-
-
 // Обновление профиля пользователя
-router.put('/', authenticateToken, async (req, res) => {
+router.put("/", authenticateToken, async (req, res) => {
     const userId = req.userId;
     const {
         description,
@@ -289,19 +338,19 @@ router.put('/', authenticateToken, async (req, res) => {
         children_attitude_id,
         height_cm,
 
-        photos,     // массив строк [url1, url2, ...]
-        interests,  // [id1, id2, ...]
-        music,      // [id1, id2, ...]
-        games,      // [id1, id2, ...]
-        films,      // ['Название фильма 1', 'Название фильма 2', ...]
-        books,      // ['Название книги 1', 'Название книги 2', ...]
-        interest_coefficient
+        photos, // массив строк [url1, url2, ...]
+        interests, // [id1, id2, ...]
+        music, // [id1, id2, ...]
+        games, // [id1, id2, ...]
+        films, // ['Название фильма 1', 'Название фильма 2', ...]
+        books, // ['Название книги 1', 'Название книги 2', ...]
+        interest_coefficient,
     } = req.body;
 
     const client = await pool.connect();
 
     try {
-        await client.query('BEGIN');
+        await client.query("BEGIN");
 
         // --- 1) Обновление описания в user_profile ---
         if (description !== undefined) {
@@ -309,7 +358,7 @@ router.put('/', authenticateToken, async (req, res) => {
                 `UPDATE user_profile
                  SET description = $1
                  WHERE user_id = $2`,
-                [description, userId]
+                [description, userId],
             );
         }
 
@@ -318,7 +367,7 @@ router.put('/', authenticateToken, async (req, res) => {
                 `UPDATE user_profile
          SET interest_coefficient = $1
          WHERE user_id = $2`,
-                [interest_coefficient, userId]
+                [interest_coefficient, userId],
             );
         }
 
@@ -330,29 +379,53 @@ router.put('/', authenticateToken, async (req, res) => {
                 return;
             }
             // сначала удаляем старую связь (если есть), затем вставляем новую
-            await client.query(`DELETE FROM ${tableName} WHERE user_id = $1`, [userId]);
+            await client.query(`DELETE FROM ${tableName} WHERE user_id = $1`, [
+                userId,
+            ]);
             if (value !== null) {
                 await client.query(
                     `INSERT INTO ${tableName} (user_id, ${columnName}) VALUES ($1, $2)`,
-                    [userId, value]
+                    [userId, value],
                 );
             }
         };
 
-        await upsertOneToOne('user_marital_status', 'marital_status_id', marital_status_id);
-        await upsertOneToOne('user_smoking_attitude', 'smoking_attitude_id', smoking_attitude_id);
-        await upsertOneToOne('user_alcohol_attitude', 'alcohol_attitude_id', alcohol_attitude_id);
-        await upsertOneToOne('user_physical_activity', 'physical_activity_id', physical_activity_id);
-        await upsertOneToOne('user_children_attitude', 'children_attitude_id', children_attitude_id);
+        await upsertOneToOne(
+            "user_marital_status",
+            "marital_status_id",
+            marital_status_id,
+        );
+        await upsertOneToOne(
+            "user_smoking_attitude",
+            "smoking_attitude_id",
+            smoking_attitude_id,
+        );
+        await upsertOneToOne(
+            "user_alcohol_attitude",
+            "alcohol_attitude_id",
+            alcohol_attitude_id,
+        );
+        await upsertOneToOne(
+            "user_physical_activity",
+            "physical_activity_id",
+            physical_activity_id,
+        );
+        await upsertOneToOne(
+            "user_children_attitude",
+            "children_attitude_id",
+            children_attitude_id,
+        );
 
         // Обновление роста (user_height)
         if (height_cm !== undefined) {
             // удаляем прошлую запись (если есть), потом вставляем новую, если не null
-            await client.query(`DELETE FROM user_height WHERE user_id = $1`, [userId]);
+            await client.query(`DELETE FROM user_height WHERE user_id = $1`, [
+                userId,
+            ]);
             if (height_cm !== null) {
                 await client.query(
                     `INSERT INTO user_height (user_id, height_cm) VALUES ($1, $2)`,
-                    [userId, height_cm]
+                    [userId, height_cm],
                 );
             }
         }
@@ -360,11 +433,13 @@ router.put('/', authenticateToken, async (req, res) => {
         // --- 3) Обновление фотографий ---
         if (Array.isArray(photos)) {
             // помечаем все старые как inactive, либо можно просто удалить и вставить новые
-            await client.query(`DELETE FROM user_photo WHERE user_id = $1`, [userId]);
+            await client.query(`DELETE FROM user_photo WHERE user_id = $1`, [
+                userId,
+            ]);
             for (const url of photos) {
                 await client.query(
                     `INSERT INTO user_photo (user_id, url) VALUES ($1, $2)`,
-                    [userId, url]
+                    [userId, url],
                 );
             }
         }
@@ -374,46 +449,51 @@ router.put('/', authenticateToken, async (req, res) => {
             if (!Array.isArray(values)) {
                 return;
             }
-            await client.query(`DELETE FROM ${tableName} WHERE user_id = $1`, [userId]);
+            await client.query(`DELETE FROM ${tableName} WHERE user_id = $1`, [
+                userId,
+            ]);
             for (const id of values) {
                 await client.query(
                     `INSERT INTO ${tableName} (user_id, ${columnName}) VALUES ($1, $2)`,
-                    [userId, id]
+                    [userId, id],
                 );
             }
         };
 
-        await updateM2M('user_interest', 'interest_id', interests);
-        await updateM2M('user_music', 'music_option_id', music);
-        await updateM2M('user_game', 'game_option_id', games);
+        await updateM2M("user_interest", "interest_id", interests);
+        await updateM2M("user_music", "music_option_id", music);
+        await updateM2M("user_game", "game_option_id", games);
 
         // --- 5) Обновление фильмов и книг (простой список строк) ---
         if (Array.isArray(films)) {
-            await client.query(`DELETE FROM user_movie WHERE user_id = $1`, [userId]);
+            await client.query(`DELETE FROM user_movie WHERE user_id = $1`, [
+                userId,
+            ]);
             for (const title of films) {
                 await client.query(
                     `INSERT INTO user_movie (user_id, title) VALUES ($1, $2)`,
-                    [userId, title]
+                    [userId, title],
                 );
             }
         }
         if (Array.isArray(books)) {
-            await client.query(`DELETE FROM user_book WHERE user_id = $1`, [userId]);
+            await client.query(`DELETE FROM user_book WHERE user_id = $1`, [
+                userId,
+            ]);
             for (const title of books) {
                 await client.query(
                     `INSERT INTO user_book (user_id, title) VALUES ($1, $2)`,
-                    [userId, title]
+                    [userId, title],
                 );
             }
         }
 
-        await client.query('COMMIT');
-        res.status(200).json({ message: 'Профиль успешно обновлён' });
-
+        await client.query("COMMIT");
+        res.status(200).json({ message: "Профиль успешно обновлён" });
     } catch (err) {
-        await client.query('ROLLBACK');
+        await client.query("ROLLBACK");
         console.error(err);
-        res.status(500).json({ message: 'Ошибка при обновлении профиля' });
+        res.status(500).json({ message: "Ошибка при обновлении профиля" });
     } finally {
         client.release();
     }

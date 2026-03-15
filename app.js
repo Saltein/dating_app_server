@@ -15,8 +15,6 @@ const otherProfiles = require('./routes/otherProfiles')
 const interactions = require('./routes/interactions')
 const chats = require('./routes/chats')
 
-const allowedOrigins = ['http://localhost:3000', 'http://26.230.70.59:3000', 'http://26.159.115.15:3000'];
-
 app.use(cors({
     origin: '*',
     credentials: true
@@ -74,5 +72,5 @@ app.use('/dating', otherProfiles)
 app.use('/dating', interactions)
 app.use('/chats', chats)
 
-const PORT = process.env.PORT || 3000
+const PORT = process.env.PORT || 3001
 server.listen(PORT, '0.0.0.0', () => console.log(`Server + WebSocket запущен на порту ${PORT}`))
